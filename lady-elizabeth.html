@@ -278,6 +278,17 @@
   loadSettings();
   applyFit();
   refreshLists();
+
+  // Guarda la pagina per funcionar sense internet (nomes a GitHub Pages / https)
+  try {
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+      navigator.serviceWorker.register('sw.js').then(() => {
+        const n = document.createElement('p'); n.className = 'hint';
+        n.textContent = '✓ Pàgina guardada: també s’obrirà sense internet.';
+        document.querySelector('.box').appendChild(n);
+      }).catch(() => {});
+    }
+  } catch (e) {}
 })();
 </script>
 </body>
