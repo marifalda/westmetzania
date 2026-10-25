@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Lady Elizabeth Westmetzania</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:Georgia,serif;color:#e8dcc4;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  #stage{position:fixed;inset:0;background:#000}
+  #stage video,#stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+  #scare{opacity:0}
+  #scare.on{opacity:1}
+  #corner{position:fixed;top:0;left:0;width:90px;height:90px;z-index:5}
+  #panel{position:fixed;inset:0;z-index:10;background:rgba(10,6,4,.94);overflow:auto;padding:24px;box-sizing:border-box}
+  #panel.hidden{display:none}
+  .box{max-width:560px;margin:0 auto}
+  h1{font-weight:normal;font-size:26px;margin:0 0 4px;color:#d9b97a}
+  .sub{opacity:.7;margin:0 0 20px;font-size:14px}
+  fieldset{border:1px solid #5a4630;border-radius:8px;margin:0 0 16px;padding:12px 14px}
+  legend{color:#d9b97a;padding:0 6px}
+  label{display:block;margin:8px 0;font-size:15px}
+  input[type=number]{width:70px;background:#1d140d;color:#e8dcc4;border:1px solid #5a4630;border-radius:4px;padding:4px}
+  input[type=range]{width:100%}
+  input[type=file]{color:#e8dcc4;font-size:14px;max-width:100%}
+  .files{font-size:13px;opacity:.75;margin-top:4px}
+  button{font-family:inherit;font-size:17px;border:0;border-radius:6px;padding:12px 18px;margin:6px 6px 0 0;cursor:pointer}
+  .primary{background:#8a1c1c;color:#fff}
+  .ghost{background:#2b2017;color:#e8dcc4;border:1px solid #5a4630}
+  #status{font-size:13px;opacity:.8;margin-top:12px;min-height:1em}
+  #dbg{position:fixed;right:8px;bottom:8px;z-index:6;font:12px monospace;background:rgba(0,0,0,.6);padding:4px 8px;border-radius:4px;display:none}
+  .hint{font-size:13px;opacity:.65}
+</style>
+</head>
+<body>
+<div id="stage">
+  <img id="idleImg" alt="" style="display:none">
+  <video id="idle" playsinline muted loop preload="auto" style="display:none"></video>
+  <video id="scare" playsinline preload="auto"></video>
+</div>
+<div id="corner"></div>
+<div id="dbg"></div>
+
+<div id="panel">
+ <div class="box">
+  <h1>Lady Elizabeth Westmetzania</h1>
+  <p class="sub">Quadre encantat · configuració</p>
+
+  <fieldset>
+   <legend>1. Fitxers</legend>
+   <label>Repòs: vídeo en bucle <b>o</b> imatge del retrat<br>
+     <input type="file" id="fIdle" accept="video/*,image/*"></label>
+   <div class="files" id="lIdle">—</div>
+   <label>Ensurts (pots triar-ne diversos)<br>
+     <input type="file" id="fScare" accept="video/*" multiple></label>
+   <div class="files" id="lScare">—</div>
+  </fieldset>
+
+  <fieldset>
+   <legend>2. Quan salta l'ensurt</legend>
+   <label><input type="checkbox" id="cTimer" checked> A l'atzar, cada
+     <input type="number" id="nMin" value="2" min="0.2" step="0.5"> a
+     <input type="number" id="nMax" value="4" min="0.2" step="0.5"> minuts</label>
+   <label><input type="checkbox" id="cTap" checked> Quan algú toca la pantalla</label>
+   <label><input type="checkbox" id="cCam"> Quan detecta moviment amb la càmera frontal</label>
+   <label>Sensibilitat del moviment
+     <input type="range" id="rSens" min="1" max="100" value="55"></label>
+   <label>Imatge i vídeos:
+     <select id="sFit" style="background:#1d140d;color:#e8dcc4;border:1px solid #5a4630;border-radius:4px;padding:4px;font-size:15px">
+       <option value="contain">Sencers (pot quedar franja negra)</option>
+       <option value="cover">Omplir la pantalla (retalla vores)</option>
+     </select></label>
+   <label>Pausa mínima entre ensurts: <input type="number" id="nCool" value="20" min="0" step="5"> s</label>
+   <p class="hint">La càmera només funciona si el navegador ho permet. Si no, el quadre funciona igual amb el temporitzador i el toc.</p>
+  </fieldset>
+
+  <button class="primary" id="bStart">▶ Començar</button>
+  <button class="ghost" id="bTest">Provar un ensurt</button>
+  <button class="ghost" id="bDbg">Mostrar diagnòstic</button>
+  <br><button class="ghost" id="bSave">Desar fitxers en aquest dispositiu</button>
+  <button class="ghost" id="bLoad">Recuperar fitxers desats</button>
+  <button class="ghost" id="bClear">Esborrar fitxers desats</button>
+  <div id="status"></div>
+  <p class="hint">Per tornar a aquest menú: toca 3 cops ràpid la cantonada superior esquerra.</p>
+ </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const idleV = $('idle'), idleI = $('idleImg'), scareV = $('scare'), panel = $('panel'), dbg = $('dbg');
+  let idleBlob = null, idleIsImg = false, scares = [], lastScare = -1;
+  let running = false, scaring = false, lastScareT = 0, timerId = null;
+  let camStream = null, camLoop = null, wakeLock = null;
+
+  const setStatus = t => $('status').textContent = t;
+  const log = t => { dbg.textContent = t; };
+
+  // ---------- IndexedDB (desa els fitxers a la tauleta) ----------
+  function db() {
+    return new Promise((res, rej) => {
+      try {
+        const r = indexedDB.open('westmetzania', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('f');
+        r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+      } catch (e) { rej(e); }
+    });
+  }
+  async function put(k, v) { try { const d = await db(); await new Promise((res, rej) => { const t = d.transaction('f', 'readwrite'); t.objectStore('f').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); } catch (e) {} }
+  async function get(k) { try { const d = await db(); return await new Promise((res) => { const r = d.transaction('f').objectStore('f').get(k); r.onsuccess = () => res(r.result); r.onerror = () => res(null); }); } catch (e) { return null; } }
+
+  const SETTINGS = ['cTimer','nMin','nMax','cTap','cCam','rSens','nCool','sFit'];
+  function applyFit() { const f = $('sFit').value; [idleV, idleI, scareV].forEach(el => el.style.objectFit = f); }
+  $('sFit').addEventListener('change', applyFit);
+  function saveSettings() {
+    const s = {}; SETTINGS.forEach(id => { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; });
+    try { localStorage.setItem('wz-settings', JSON.stringify(s)); } catch (e) {}
+  }
+  function loadSettings() {
+    try { const s = JSON.parse(localStorage.getItem('wz-settings') || '{}');
+      Object.entries(s).forEach(([id, v]) => { const el = $(id); if (!el) return; if (el.type === 'checkbox') el.checked = v; else el.value = v; });
+    } catch (e) {}
+  }
+  SETTINGS.forEach(id => $(id).addEventListener('change', saveSettings));
+
+  // ---------- Fitxers ----------
+  function showIdle() {
+    if (!idleBlob) return;
+    const url = URL.createObjectURL(idleBlob);
+    if (idleIsImg) { idleI.src = url; idleI.style.display = 'block'; idleV.style.display = 'none'; }
+    else { idleV.src = url; idleV.style.display = 'block'; idleI.style.display = 'none'; }
+  }
+  function refreshLists() {
+    $('lIdle').textContent = idleBlob ? (idleIsImg ? 'Imatge carregada' : 'Vídeo carregat') + ' · ' + Math.round(idleBlob.size/1024) + ' KB' : '—';
+    $('lScare').textContent = scares.length ? scares.length + ' ensurt(s) carregat(s)' : '—';
+  }
+  $('fIdle').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    idleBlob = f; idleIsImg = f.type.startsWith('image/');
+    showIdle(); refreshLists();
+  });
+  $('fScare').addEventListener('change', async e => {
+    scares = Array.from(e.target.files); lastScare = -1;
+    refreshLists();
+  });
+
+  // ---------- Ensurt ----------
+  function pickScare() {
+    if (scares.length === 1) return 0;
+    let i; do { i = Math.floor(Math.random() * scares.length); } while (i === lastScare);
+    return i;
+  }
+  async function scare(reason) {
+    if (scaring || !scares.length) return;
+    const cool = (+$('nCool').value || 0) * 1000;
+    if (reason !== 'test' && Date.now() - lastScareT < cool) return;
+    scaring = true; lastScareT = Date.now();
+    const i = pickScare(); lastScare = i;
+    log('Ensurt ' + (i+1) + ' (' + reason + ')');
+    if (scareV.dataset.url) URL.revokeObjectURL(scareV.dataset.url);
+    scareV.dataset.url = URL.createObjectURL(scares[i]);
+    scareV.src = scareV.dataset.url;
+    scareV.muted = false; scareV.load();
+    const show = () => { scareV.classList.add('on'); scareV.removeEventListener('playing', show); };
+    scareV.addEventListener('playing', show);
+    try { await scareV.play(); } catch (e) { scareV.muted = true; try { await scareV.play(); } catch (e2) { endScare(); } }
+  }
+  function endScare() {
+    scareV.classList.remove('on');
+    setTimeout(() => { scareV.pause(); scareV.removeAttribute('src'); scareV.load(); }, 50);
+    scaring = false; lastScareT = Date.now();
+    if (running) scheduleTimer();
+  }
+  scareV.addEventListener('ended', endScare);
+  scareV.addEventListener('error', () => { if (scaring) endScare(); });
+
+  // ---------- Temporitzador ----------
+  function scheduleTimer() {
+    clearTimeout(timerId);
+    if (!$('cTimer').checked) return;
+    const a = +$('nMin').value || 2, b = Math.max(a, +$('nMax').value || 4);
+    const ms = (a + Math.random() * (b - a)) * 60000;
+    timerId = setTimeout(() => scare('temps'), ms);
+  }
+
+  // ---------- Toc ----------
+  $('stage').addEventListener('pointerdown', () => { if (running && $('cTap').checked) scare('toc'); });
+
+  // ---------- Càmera (detecció de moviment) ----------
+  async function startCam() {
+    if (!$('cCam').checked) return;
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 320, height: 240 }, audio: false });
+    } catch (e) { log('Càmera no disponible: funciona amb temporitzador i toc'); return; }
+    const v = document.createElement('video'); v.playsInline = true; v.muted = true; v.srcObject = camStream; await v.play().catch(()=>{});
+    const c = document.createElement('canvas'); c.width = 64; c.height = 48; const ctx = c.getContext('2d', { willReadFrequently: true });
+    let prev = null, hits = 0;
+    camLoop = setInterval(() => {
+      if (scaring) { prev = null; return; }
+      ctx.drawImage(v, 0, 0, 64, 48);
+      const d = ctx.getImageData(0, 0, 64, 48).data, g = new Uint8Array(64*48);
+      for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = (d[i] + d[i+1] + d[i+2]) / 3;
+      if (prev) {
+        let changed = 0;
+        for (let j = 0; j < g.length; j++) if (Math.abs(g[j] - prev[j]) > 25) changed++;
+        const pct = changed / g.length * 100;
+        const thr = 30 - (+$('rSens').value / 100) * 28; // 2%..30% de píxels canviats
+        hits = pct > thr ? hits + 1 : 0;
+        if (dbg.style.display === 'block' && !scaring) log('Moviment ' + pct.toFixed(1) + '% (llindar ' + thr.toFixed(1) + '%)');
+        if (hits >= 3) { hits = 0; scare('moviment'); }
+      }
+      prev = g;
+    }, 200);
+  }
+  function stopCam() { clearInterval(camLoop); camLoop = null; if (camStream) camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+
+  // ---------- Pantalla encesa ----------
+  async function keepAwake() { try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {} }
+  document.addEventListener('visibilitychange', () => { if (running && document.visibilityState === 'visible') keepAwake(); });
+
+  // ---------- Inici / menú ----------
+  async function start() {
+    if (!idleBlob) { setStatus('Falta la imatge o el vídeo de repòs.'); return; }
+    if (!scares.length) { setStatus('Falta almenys un vídeo d’ensurt.'); return; }
+    saveSettings();
+    // desbloqueja l'àudio en aquest mateix toc
+    scareV.src = URL.createObjectURL(scares[0]); scareV.muted = true;
+    try { await scareV.play(); scareV.pause(); } catch (e) {}
+    scareV.removeAttribute('src'); scareV.load();
+    const el = document.documentElement;
+    try { await (el.requestFullscreen || el.webkitRequestFullscreen).call(el); } catch (e) {}
+    showIdle(); if (!idleIsImg) idleV.play().catch(()=>{});
+    panel.classList.add('hidden'); running = true; lastScareT = 0;
+    keepAwake(); scheduleTimer(); startCam();
+  }
+  function openMenu() {
+    running = false; clearTimeout(timerId); stopCam();
+    if (scaring) endScare();
+    panel.classList.remove('hidden'); setStatus('');
+  }
+  $('bStart').addEventListener('click', start);
+  $('bTest').addEventListener('click', async () => {
+    if (!scares.length) { setStatus('Primer tria algun vídeo d’ensurt.'); return; }
+    panel.classList.add('hidden'); showIdle(); if (!idleIsImg) idleV.play().catch(()=>{});
+    const back = () => { scareV.removeEventListener('ended', back); if (!running) panel.classList.remove('hidden'); };
+    scareV.addEventListener('ended', back);
+    scare('test');
+  });
+  $('bDbg').addEventListener('click', () => { dbg.style.display = dbg.style.display === 'block' ? 'none' : 'block'; log('Diagnòstic actiu'); });
+
+  let taps = [];
+  $('corner').addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    const now = Date.now(); taps = taps.filter(t => now - t < 800); taps.push(now);
+    if (taps.length >= 3) { taps = []; openMenu(); }
+  });
+
+  // ---------- Fitxers desats: només es carreguen si l'usuari ho demana ----------
+  $('bLoad').addEventListener('click', async () => {
+    setStatus('Carregant fitxers desats…');
+    const i = await get('idle'); if (i && i.blob) { idleBlob = i.blob; idleIsImg = i.img; showIdle(); }
+    const s = await get('scares'); if (s && s.length) scares = s;
+    refreshLists();
+    setStatus(idleBlob && scares.length ? 'Fitxers recuperats. Prem «Començar».' : 'No hi ha fitxers desats.');
+  });
+  $('bSave').addEventListener('click', async () => {
+    if (!idleBlob || !scares.length) { setStatus('Primer tria els fitxers.'); return; }
+    setStatus('Desant…');
+    await put('idle', { blob: idleBlob, img: idleIsImg });
+    await put('scares', scares);
+    setStatus('Fitxers desats.');
+  });
+  $('bClear').addEventListener('click', async () => {
+    try { const d = await db(); d.close(); } catch (e) {}
+    try { indexedDB.deleteDatabase('westmetzania'); } catch (e) {}
+    idleBlob = null; scares = []; refreshLists(); setStatus('Fitxers desats esborrats.');
+  });
+  loadSettings();
+  applyFit();
+  refreshLists();
+})();
+</script>
+</body>
+</html>
